@@ -1,82 +1,103 @@
-// Helper: sum a column by its field name
-function sumByField(summary, fieldName) {
-  if (!summary || !summary.columns) return 0;
-  const idx = summary.columns.findIndex(c => (c.fieldName || c.fieldName === 0) && c.fieldName.toLowerCase() === fieldName.toLowerCase());
-  if (idx === -1) return 0;
-  let total = 0;
-  for (const row of summary.data) {
-    const cell = row[idx];
-    const v = typeof cell === 'object' && cell.value !== undefined ? cell.value : cell;
-    if (typeof v === 'number') total += v;
+// ===== Config =====
+const TARGET_DS_NAME = "gamesDataset";     // <-- must match the data source display name
+const MAX_ROWS = 2000;                     // safety cap for summary data rows
+
+// Render helpers
+function htmlEscape(s) {
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function renderTable(container, summary) {
+  if (!summary || !summary.columns || !summary.data || !summary.columns.length) {
+    container.innerHTML = "<em>No data returned.</em>";
+    return;
   }
-  return total;
+  const headers = summary.columns.map(c => `<th>${htmlEscape(c.fieldName ?? "")}</th>`).join("");
+  const rows = summary.data.slice(0, MAX_ROWS).map(r => {
+    const cells = r.map(cell => {
+      const v = (cell && typeof cell === "object" && "value" in cell) ? cell.value : cell;
+      return `<td>${htmlEscape(v)}</td>`;
+    }).join("");
+    return `<tr>${cells}</tr>`;
+  }).join("");
+  container.innerHTML = `
+    <div style="margin:8px 0; font-size:12px; color:#667;">
+      Showing ${Math.min(summary.data.length, MAX_ROWS)} of ${summary.data.length} row(s)
+    </div>
+    <div style="overflow:auto; max-height:420px; border:1px solid #ddd; border-radius:8px;">
+      <table style="border-collapse:collapse; width:100%;">
+        <thead style="position:sticky; top:0; background:#fafafa;">
+          <tr>${headers}</tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
-async function refreshKPIs(worksheet) {
-  // If marks selected, prefer selected summary; otherwise use full summary
-  const marks = await worksheet.getSelectedMarksAsync();
-  let summary;
-  if (marks && marks.data && marks.data.length > 0) {
-    // marks.data is an array of data tables (one per mark type) — use first
-    const table = marks.data[0];
-    summary = {
-      columns: table.columns.map(c => ({ fieldName: c.fieldName })),
-      data: table.data // already an array of rows with raw values
-    };
-    document.getElementById('sel-count').textContent = table.totalRowCount;
-  } else {
-    const s = await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: 10000 });
-    summary = s;
-    document.getElementById('sel-count').textContent = 0;
+async function findWorksheetUsingTargetDS(dashboard) {
+  // Scan worksheets and ask each for its data sources; return the first that uses TARGET_DS_NAME
+  for (const ws of dashboard.worksheets) {
+    try {
+      const dss = await ws.getDataSourcesAsync();
+      if (dss.some(ds => (ds.name || "").toLowerCase() === TARGET_DS_NAME.toLowerCase())) {
+        return ws;
+      }
+    } catch { /* ignore this worksheet and continue */ }
   }
-
-  // Change "Sales" below to your measure's field name exactly as it appears
-  const sumSales = sumByField(summary, 'Sales');
-  document.getElementById('sum-sales').textContent = sumSales.toLocaleString();
+  return null;
 }
 
-async function setParameter(dashboard, value) {
-  const params = await tableau.extensions.dashboardContent.dashboard.getParametersAsync();
-  const target = params.find(p => p.name === 'KPI Threshold'); // must exist in the workbook
-  if (!target) throw new Error("Parameter 'KPI Threshold' not found in this workbook.");
-  await target.changeValueAsync(Number(value));
+async function readSummaryData(worksheet) {
+  // ignoreSelection=true so it loads immediately without user interaction
+  const summary = await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: MAX_ROWS });
+  return summary;
 }
 
 async function main() {
-  const status = document.getElementById('status');
-  status.textContent = 'Initializing extension…';
+  const statusEl = document.getElementById("status");
+  const wsInfoEl = document.getElementById("ws-info");
+  const tableEl = document.getElementById("table");
 
+  statusEl.textContent = "Initializing extension…";
   await tableau.extensions.initializeAsync();
   const dashboard = tableau.extensions.dashboardContent.dashboard;
-  status.textContent = 'Initialized.';
 
-  // Pick the first worksheet on the first dashboard object; adjust if needed
-  const firstObject = dashboard.worksheets[0] || dashboard.worksheets?.[0];
-  const worksheet = firstObject || dashboard.worksheets[0];
-  if (!worksheet) throw new Error('No worksheet found for this dashboard.');
+  statusEl.textContent = "Searching for worksheet using data source: " + TARGET_DS_NAME + " …";
+  const ws = await findWorksheetUsingTargetDS(dashboard);
 
-  document.getElementById('ws-name').textContent = worksheet.name;
+  if (!ws) {
+    statusEl.textContent =
+      `Could not find any worksheet on this dashboard that uses a data source named "${TARGET_DS_NAME}". ` +
+      `Add a worksheet bound to that data source and reload the extension.`;
+    return;
+  }
 
-  // Initial read + re-run when marks change
-  await refreshKPIs(worksheet);
-  worksheet.addEventListener(tableau.TableauEventType.MarkSelectionChanged, async () => {
-    await refreshKPIs(worksheet);
-  });
+  wsInfoEl.innerHTML = `<strong>Worksheet:</strong> ${htmlEscape(ws.name)}`;
 
-  // Parameter button
-  document.getElementById('set-param').addEventListener('click', async () => {
-    const v = document.getElementById('param-input').value;
+  try {
+    statusEl.textContent = "Loading data…";
+    const summary = await readSummaryData(ws);
+    renderTable(tableEl, summary);
+    statusEl.textContent = "Loaded.";
+  } catch (err) {
+    statusEl.textContent = "Failed to read data: " + err.message;
+    console.error(err);
+  }
+
+  // Optional: refresh if user changes marks (live feel)
+  ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged, async () => {
     try {
-      await setParameter(dashboard, v);
-      status.textContent = `Parameter 'KPI Threshold' set to ${v}.`;
+      statusEl.textContent = "Refreshing…";
+      const summary = await readSummaryData(ws);
+      renderTable(tableEl, summary);
+      statusEl.textContent = "Loaded.";
     } catch (err) {
-      status.textContent = `Error: ${err.message}`;
+      statusEl.textContent = "Refresh failed: " + err.message;
     }
   });
 }
 
 main().catch(err => {
-  const status = document.getElementById('status');
-  status.textContent = 'Initialization failed: ' + err.message;
+  const statusEl = document.getElementById("status");
+  statusEl.textContent = "Initialization failed: " + err.message;
   console.error(err);
 });
