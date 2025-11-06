@@ -1,5 +1,5 @@
 // ===== Config =====
-const TARGET_DS_NAME = "gamesDataset";     // <-- must match the data source display name
+const TARGET_DS_NAME = "games";     // <-- must match the data source display name
 const MAX_ROWS = 2000;                     // safety cap for summary data rows
 
 // Render helpers
@@ -101,3 +101,4 @@ main().catch(err => {
   statusEl.textContent = "Initialization failed: " + err.message;
   console.error(err);
 });
+
