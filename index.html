@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tableau Extension Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tableau Extensions API (hosted by Tableau) -->
+  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="card">
+    <h1>Tableau Extension Demo</h1>
+    <div id="status">Initializing…</div>
+
+    <div class="kpis">
+      <div><strong>Worksheet:</strong> <span id="ws-name">—</span></div>
+      <div><strong>Selected Marks:</strong> <span id="sel-count">0</span></div>
+      <div><strong>Sum of Sales:</strong> <span id="sum-sales">0</span></div>
+    </div>
+
+    <div class="actions">
+      <label>Set Parameter <code>KPI Threshold</code>:</label>
+      <input id="param-input" type="number" step="1" value="50" />
+      <button id="set-param">Apply</button>
+    </div>
+
+    <div class="hint">
+      Tip: select some marks in the worksheet and watch numbers update.
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest manifest-version="1.0">
+  <dashboard-extension id="kpi-dashboard-extension"
+                       extension-version="1.0.0"
+                       name="KPI Dashboard Extension"
+                       author="Your Name"
+                       description="Reads selections and sets a Tableau parameter."
+                       min-api-version="1.6">
+    <source-location>
+      <!-- After you enable GitHub Pages, replace this with your Pages URL -->
+      <url>https://<your-username>.github.io/tableau-extension-demo/index.html</url>
+    </source-location>
+    <permissions>
+      <permission>api-access</permission>
+      <permission>internet-access</permission>
+      <permission>full-data</permission>
+    </permissions>
+    <requested-extension-capabilities>
+      <capability>dashboard</capability>
+      <capability>worksheet</capability>
+      <capability>table</capability>
+    </requested-extension-capabilities>
+  </dashboard-extension>
+</manifest>
