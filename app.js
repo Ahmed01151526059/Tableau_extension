@@ -1,53 +1,39 @@
 /******************************************************
- * Games Dataset Extension — Diagnostic Build
- * - Auto-reads Summary Data from a worksheet whose
- *   data source is named "gamesDataset"
- * - Prints detailed step logs to UI + console
+ * Games Dataset Extension — Robust / Diagnostic build
  ******************************************************/
 
-/* ========= Configuration ========= */
-const TARGET_DS_NAME = "gamesDataset";   // change if your data source display name differs
-const MAX_ROWS = 2000;                   // cap rows for summary data
-const DEBUG = true;                      // toggles verbose console logging
+const TARGET_DS_NAME = "gamesDataset";
+const MAX_ROWS = 2000;
+const POLL_MAX = 60;      // 60 * 250ms = 15s
+const POLL_INTERVAL = 250;
 
-/* ========= Minimal UI hookups (safe even if elements missing) ========= */
-const getEl = (id, createTag = "div") => {
-  let el = document.getElementById(id);
-  if (!el) {
-    el = document.createElement(createTag);
-    el.id = id;
-    document.body.appendChild(el);
-  }
-  return el;
-};
-const statusEl = getEl("status");
-const wsInfoEl = getEl("ws-info");
-const tableEl  = getEl("table");
-const diagEl   = getEl("diag");
+// ----- tiny UI helpers -----
+const el = (id) => document.getElementById(id) || (() => {
+  const d = document.createElement("div"); d.id = id; document.body.appendChild(d); return d;
+})();
 
-function setStatus(msg) {
-  statusEl.textContent = msg;
-  log(`STATUS: ${msg}`);
-}
-function log(msg, obj) {
-  if (DEBUG) console.log(`[EXT] ${msg}`, obj ?? "");
+const statusEl = el("status");
+const wsInfoEl = el("ws-info");
+const tableEl  = el("table");
+const diagEl   = el("diag");
+
+function log(msg, data) {
+  console.log("[EXT]", msg, data ?? "");
   const line = document.createElement("div");
-  line.style.fontSize = "12px";
-  line.style.color = "#334155";
+  line.style.cssText = "font-size:12px;color:#334155";
   line.textContent = msg;
   diagEl.appendChild(line);
 }
 function logError(msg, err) {
-  console.error(`[EXT ERROR] ${msg}`, err);
+  console.error("[EXT ERROR]", msg, err);
   const line = document.createElement("div");
-  line.style.fontSize = "12px";
-  line.style.color = "#b91c1c";
+  line.style.cssText = "font-size:12px;color:#b91c1c";
   line.textContent = `❌ ${msg}: ${err?.message || err}`;
   diagEl.appendChild(line);
 }
+function setStatus(s){ statusEl.textContent = s; log("STATUS: " + s); }
 
-/* ========= Helpers ========= */
-function htmlEscape(s){return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function htmlEscape(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 function renderTable(container, summary){
   if(!summary || !summary.columns || !summary.data || !summary.columns.length){
@@ -61,7 +47,6 @@ function renderTable(container, summary){
     }).join("");
     return `<tr>${cells}</tr>`;
   }).join("");
-
   container.innerHTML = `
     <div style="margin:8px 0">
       <span style="display:inline-block;background:#eef2f7;color:#334155;border:1px solid #dbe3ea;border-radius:999px;padding:2px 8px;font-size:12px">
@@ -81,15 +66,13 @@ async function listWorksheetsAndDataSources(dashboard){
   for (const ws of dashboard.worksheets) {
     try {
       const dss = await ws.getDataSourcesAsync();
-      const names = dss.map(ds => ds.name);
-      report.push({ worksheet: ws.name, datasources: names });
+      report.push({ worksheet: ws.name, datasources: dss.map(ds => ds.name) });
     } catch (e) {
       report.push({ worksheet: ws.name, datasources: [`<error: ${e.message}>`] });
     }
   }
-  log("🔎 Worksheet → Data Sources map:");
-  report.forEach(r => log(`   - ${r.worksheet} :: [${r.datasources.join(", ")}]`));
-  return report;
+  log("🔎 Worksheet → Data Sources");
+  report.forEach(r => log(`   - ${r.worksheet}: [${r.datasources.join(", ")}]`));
 }
 
 async function findWorksheetUsingTargetDS(dashboard){
@@ -97,70 +80,67 @@ async function findWorksheetUsingTargetDS(dashboard){
     try{
       const dss = await ws.getDataSourcesAsync();
       if(dss.some(ds => (ds.name || "").toLowerCase() === TARGET_DS_NAME.toLowerCase())){
-        log(`✅ Found worksheet "${ws.name}" using data source "${TARGET_DS_NAME}"`);
+        log(`✅ Found worksheet "${ws.name}" using "${TARGET_DS_NAME}"`);
         return ws;
       }
       log(`… "${ws.name}" does not use "${TARGET_DS_NAME}"`);
-    }catch(e){
-      logError(`Failed to read data sources for worksheet "${ws.name}"`, e);
-    }
+    }catch(e){ logError(`Reading data sources for "${ws.name}" failed`, e); }
   }
   return null;
 }
 
-async function readSummaryData(worksheet){
-  log(`📥 Calling getSummaryDataAsync(ignoreSelection=true, maxRows=${MAX_ROWS}) on "${worksheet.name}"`);
-  const s = await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: MAX_ROWS });
+async function readSummaryData(ws){
+  log(`📥 getSummaryDataAsync(ignoreSelection=true, maxRows=${MAX_ROWS}) on "${ws.name}"`);
+  const s = await ws.getSummaryDataAsync({ ignoreSelection: true, maxRows: MAX_ROWS });
   log(`✅ Summary data returned: rows=${s.data?.length ?? 0}, cols=${s.columns?.length ?? 0}`);
   return s;
 }
 
-/* ========= Environment Guards ========= */
-// Wait until Tableau injects the Extensions API (prevents 'tableau is not defined')
-function waitForTableau(retries = 40, intervalMs = 250){
+// ---------- HARD GUARD: never touch `tableau` until injected ----------
+function inIframe(){ try { return window.self !== window.top; } catch { return true; } }
+
+function waitForTableau(maxTries = POLL_MAX){
   return new Promise((resolve, reject) => {
-    const tick = () => {
-      if (window.tableau && window.tableau.extensions) { resolve(); return; }
-      if (retries-- <= 0) { reject(new Error("Tableau Extensions API not available — are you running inside a Tableau Dashboard Extension?")); return; }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
+    let tries = 0;
+    const t = setInterval(() => {
+      tries++;
+      if (window.tableau && window.tableau.extensions) {
+        clearInterval(t); resolve();
+      } else if (tries >= maxTries) {
+        clearInterval(t); 
+        reject(new Error("Tableau Extensions API not available. Are you running this as a Dashboard → Extension with a .trex file?"));
+      }
+    }, POLL_INTERVAL);
   });
 }
 
-// Quick environment dump for troubleshooting
-function envDump() {
-  log(`🌐 Location: ${window.location.href}`);
-  log(`🧭 Referrer: ${document.referrer || "(none)"}`);
-  log(`🧩 In iframe: ${window.self !== window.top}`);
-  log(`🧰 User-Agent: ${navigator.userAgent}`);
-}
-
-/* ========= Main ========= */
 async function main(){
-  diagEl.innerHTML = ""; // clear previous logs
-  envDump();
+  // Environment hints before we even try:
+  log(`🌐 URL: ${location.href}`);
+  log(`🧭 Referrer: ${document.referrer || "(none)"}`);
+  log(`🧩 In iframe: ${inIframe()}`);
+  log(`🧰 UA: ${navigator.userAgent}`);
 
-  try{
+  try {
     setStatus("Step 1/7 — Waiting for Tableau Extensions API…");
-    await waitForTableau();
-    log("✅ Tableau Extensions API detected.");
+    await waitForTableau();              // <- we do not reference `tableau` before this resolves
+    log("✅ Extensions API detected");
 
-    setStatus("Step 2/7 — Initializing extension…");
-    await tableau.extensions.initializeAsync();
-    log("✅ initializeAsync() resolved.");
+    setStatus("Step 2/7 — Initializing…");
+    await window.tableau.extensions.initializeAsync();
+    log("✅ initializeAsync() ok");
 
-    const dashboard = tableau.extensions.dashboardContent.dashboard;
-    log(`✅ Dashboard loaded. Worksheets count = ${dashboard.worksheets.length}`);
+    const dashboard = window.tableau.extensions.dashboardContent.dashboard;
+    log(`✅ Dashboard loaded (worksheets: ${dashboard.worksheets.length})`);
 
-    setStatus("Step 3/7 — Listing worksheets and data sources…");
+    setStatus("Step 3/7 — Listing worksheets & data sources…");
     await listWorksheetsAndDataSources(dashboard);
 
-    setStatus(`Step 4/7 — Finding worksheet using data source "${TARGET_DS_NAME}"…`);
+    setStatus(`Step 4/7 — Locating worksheet using "${TARGET_DS_NAME}"…`);
     const ws = await findWorksheetUsingTargetDS(dashboard);
     if(!ws){
       setStatus(`❌ No worksheet on this dashboard uses a data source named "${TARGET_DS_NAME}".`);
-      log("➡️ Fix: Put a worksheet on this dashboard bound to the target data source, or change TARGET_DS_NAME in app.js.");
+      log("➡️ Fix: Place a worksheet bound to that data source on this dashboard, or change TARGET_DS_NAME.");
       return;
     }
     wsInfoEl.innerHTML = `<strong>Worksheet:</strong> ${htmlEscape(ws.name)}`;
@@ -172,9 +152,9 @@ async function main(){
     renderTable(tableEl, summary);
 
     setStatus("Step 7/7 — Done. Listening for selection changes…");
-    ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged, async () => {
+    ws.addEventListener(window.tableau.TableauEventType.MarkSelectionChanged, async () => {
       try{
-        setStatus("Refresh — selection changed, reloading data…");
+        setStatus("Refreshing…");
         const s = await readSummaryData(ws);
         renderTable(tableEl, s);
         setStatus("Loaded.");
@@ -184,20 +164,22 @@ async function main(){
       }
     });
 
-  }catch(err){
+  } catch (err) {
     logError("Initialization failed", err);
-    setStatus("Initialization failed — see diagnostics below and console.");
+    setStatus("Initialization failed — see diagnostics above and console.");
+    // Extra guidance:
+    log("Checklist:");
+    log("1) Add as Dashboard → Extension (NOT Web Page / NOT Viz Extension)");
+    log("2) .trex <url> is HTTPS and on the site safe list (domain only)");
+    log("3) index.html includes the Extensions API BEFORE this app.js:");
+    log('   <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>');
+    log("4) At least one worksheet on the dashboard uses data source named: " + TARGET_DS_NAME);
   }
 }
 
-/* ========= Extra: manual re-run button (appears at bottom) ========= */
-(function addRerunButton(){
-  const btn = document.createElement("button");
-  btn.textContent = "Run Diagnostics Again";
-  btn.style.cssText = "margin-top:12px;padding:8px 12px;border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;cursor:pointer";
-  btn.onclick = main;
-  diagEl.appendChild(btn);
-})();
-
-/* Kick off */
-main();
+// Run only after DOM is ready (avoids race with script tags)
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", main);
+} else {
+  main();
+}
