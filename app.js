@@ -2,7 +2,7 @@
  * Games Dataset Extension — Robust / Diagnostic build
  ******************************************************/
 
-const TARGET_DS_NAME = "gamesDataset";
+const TARGET_DS_NAME = "games";
 const MAX_ROWS = 2000;
 const POLL_MAX = 60;      // 60 * 250ms = 15s
 const POLL_INTERVAL = 250;
@@ -183,3 +183,4 @@ if (document.readyState === "loading") {
 } else {
   main();
 }
+
