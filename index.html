@@ -10,26 +10,14 @@
 </head>
 <body>
   <div class="card">
-    <h1>Tableau Extension Demo</h1>
+    <h1>Games Dataset (auto-load)</h1>
     <div id="status">Initializing…</div>
-
-    <div class="kpis">
-      <div><strong>Worksheet:</strong> <span id="ws-name">—</span></div>
-      <div><strong>Selected Marks:</strong> <span id="sel-count">0</span></div>
-      <div><strong>Sum of Sales:</strong> <span id="sum-sales">0</span></div>
-    </div>
-
-    <div class="actions">
-      <label>Set Parameter <code>KPI Threshold</code>:</label>
-      <input id="param-input" type="number" step="1" value="50" />
-      <button id="set-param">Apply</button>
-    </div>
-
-    <div class="hint">
-      Tip: select some marks in the worksheet and watch numbers update.
-    </div>
+    <div id="ws-info"></div>
+    <div id="table"></div>
   </div>
-
+  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
   <script src="./app.js"></script>
 </body>
+
 </html>
+
