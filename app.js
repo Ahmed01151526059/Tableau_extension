@@ -1,15 +1,13 @@
-// ===== Config =====
-const TARGET_DS_NAME = "games";     // <-- must match the data source display name
-const MAX_ROWS = 2000;                     // safety cap for summary data rows
+// ========= Config =========
+const TARGET_DS_NAME = "gamesDataset"; // data source display name to look for
+const MAX_ROWS = 2000;                 // cap rows for summary data
 
-// Render helpers
-function htmlEscape(s) {
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function renderTable(container, summary) {
-  if (!summary || !summary.columns || !summary.data || !summary.columns.length) {
-    container.innerHTML = "<em>No data returned.</em>";
-    return;
+// ========= Helpers =========
+function htmlEscape(s){return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+
+function renderTable(container, summary){
+  if(!summary || !summary.columns || !summary.data || !summary.columns.length){
+    container.innerHTML = "<em>No data returned.</em>"; return;
   }
   const headers = summary.columns.map(c => `<th>${htmlEscape(c.fieldName ?? "")}</th>`).join("");
   const rows = summary.data.slice(0, MAX_ROWS).map(r => {
@@ -19,86 +17,90 @@ function renderTable(container, summary) {
     }).join("");
     return `<tr>${cells}</tr>`;
   }).join("");
+
   container.innerHTML = `
-    <div style="margin:8px 0; font-size:12px; color:#667;">
-      Showing ${Math.min(summary.data.length, MAX_ROWS)} of ${summary.data.length} row(s)
+    <div style="margin:8px 0">
+      <span class="badge">Rows: ${Math.min(summary.data.length, MAX_ROWS)} / ${summary.data.length}</span>
     </div>
-    <div style="overflow:auto; max-height:420px; border:1px solid #ddd; border-radius:8px;">
-      <table style="border-collapse:collapse; width:100%;">
-        <thead style="position:sticky; top:0; background:#fafafa;">
-          <tr>${headers}</tr>
-        </thead>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
 
-async function findWorksheetUsingTargetDS(dashboard) {
-  // Scan worksheets and ask each for its data sources; return the first that uses TARGET_DS_NAME
-  for (const ws of dashboard.worksheets) {
-    try {
+async function findWorksheetUsingTargetDS(dashboard){
+  for(const ws of dashboard.worksheets){
+    try{
       const dss = await ws.getDataSourcesAsync();
-      if (dss.some(ds => (ds.name || "").toLowerCase() === TARGET_DS_NAME.toLowerCase())) {
+      if(dss.some(ds => (ds.name || "").toLowerCase() === TARGET_DS_NAME.toLowerCase())){
         return ws;
       }
-    } catch { /* ignore this worksheet and continue */ }
+    }catch(e){ /* continue to next worksheet */ }
   }
   return null;
 }
 
-async function readSummaryData(worksheet) {
-  // ignoreSelection=true so it loads immediately without user interaction
-  const summary = await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: MAX_ROWS });
-  return summary;
+async function readSummaryData(worksheet){
+  // ignoreSelection=true so we always get a stable snapshot without user clicks
+  return await worksheet.getSummaryDataAsync({ ignoreSelection: true, maxRows: MAX_ROWS });
 }
 
-async function main() {
-  const statusEl = document.getElementById("status");
-  const wsInfoEl = document.getElementById("ws-info");
-  const tableEl = document.getElementById("table");
-
-  statusEl.textContent = "Initializing extension…";
-  await tableau.extensions.initializeAsync();
-  const dashboard = tableau.extensions.dashboardContent.dashboard;
-
-  statusEl.textContent = "Searching for worksheet using data source: " + TARGET_DS_NAME + " …";
-  const ws = await findWorksheetUsingTargetDS(dashboard);
-
-  if (!ws) {
-    statusEl.textContent =
-      `Could not find any worksheet on this dashboard that uses a data source named "${TARGET_DS_NAME}". ` +
-      `Add a worksheet bound to that data source and reload the extension.`;
-    return;
-  }
-
-  wsInfoEl.innerHTML = `<strong>Worksheet:</strong> ${htmlEscape(ws.name)}`;
-
-  try {
-    statusEl.textContent = "Loading data…";
-    const summary = await readSummaryData(ws);
-    renderTable(tableEl, summary);
-    statusEl.textContent = "Loaded.";
-  } catch (err) {
-    statusEl.textContent = "Failed to read data: " + err.message;
-    console.error(err);
-  }
-
-  // Optional: refresh if user changes marks (live feel)
-  ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged, async () => {
-    try {
-      statusEl.textContent = "Refreshing…";
-      const summary = await readSummaryData(ws);
-      renderTable(tableEl, summary);
-      statusEl.textContent = "Loaded.";
-    } catch (err) {
-      statusEl.textContent = "Refresh failed: " + err.message;
-    }
+// Wait until Tableau injects the Extensions API (prevents 'tableau is not defined')
+function waitForTableau(retries = 40){
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if(window.tableau && window.tableau.extensions){ resolve(); return; }
+      if(retries-- <= 0){ reject(new Error("Tableau Extensions API not available")); return; }
+      setTimeout(tick, 250);
+    };
+    tick();
   });
 }
 
-main().catch(err => {
-  const statusEl = document.getElementById("status");
-  statusEl.textContent = "Initialization failed: " + err.message;
-  console.error(err);
-});
+async function main(){
+  const status = document.getElementById("status");
+  const wsInfo = document.getElementById("ws-info");
+  const tableEl = document.getElementById("table");
 
+  try{
+    status.textContent = "Initializing extension…";
+    await waitForTableau();
+    await tableau.extensions.initializeAsync();
+
+    const dashboard = tableau.extensions.dashboardContent.dashboard;
+
+    status.textContent = `Searching for a worksheet using data source "${TARGET_DS_NAME}"…`;
+    const ws = await findWorksheetUsingTargetDS(dashboard);
+    if(!ws){
+      status.textContent = `No worksheet on this dashboard uses a data source named "${TARGET_DS_NAME}". Add one and reload.`;
+      return;
+    }
+
+    wsInfo.innerHTML = `<strong>Worksheet:</strong> ${htmlEscape(ws.name)}`;
+
+    status.textContent = "Loading data…";
+    const summary = await readSummaryData(ws);
+    renderTable(tableEl, summary);
+    status.textContent = "Loaded.";
+
+    // Optional live refresh when selection changes
+    ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged, async () => {
+      try{
+        status.textContent = "Refreshing…";
+        const s = await readSummaryData(ws);
+        renderTable(tableEl, s);
+        status.textContent = "Loaded.";
+      }catch(e){
+        status.textContent = "Refresh failed: " + e.message;
+      }
+    });
+
+  }catch(err){
+    status.textContent = "Initialization failed: " + err.message;
+    console.error(err);
+  }
+}
+
+main();
