@@ -1,5 +1,5 @@
 // ========= Config =========
-const TARGET_DS_NAME = "Sheet1"; // data source display name to look for
+const TARGET_DS_NAME = "gamesDataset"; // data source display name to look for
 const MAX_ROWS = 2000;                 // cap rows for summary data
 
 // ========= Helpers =========
@@ -104,5 +104,6 @@ async function main(){
 }
 
 main();
+
 
 
